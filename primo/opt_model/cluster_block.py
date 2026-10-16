@@ -270,6 +270,10 @@ class ClusterBlockData(BlockData):
             doc="Ensures at most one num_wells_var is selected",
         )
 
+        @self.Constraint(self.set_wells)
+        def bound_select_well_select_cluster(blk, w):
+            return blk.select_well[w] <= blk.select_cluster
+
     def deactivate(self):
         """
         Deactivates the constraints present in this block.

@@ -60,6 +60,16 @@ class EfficiencyBlockData(BlockData):
         """
         Builds efficiency model
         """
+        try:
+            embedding_b = self.plugging_campaign_model.model_inputs.config.embedding_b
+        except AttributeError:
+            LOGGER.warning("Unable to find embedding_b parameter; setting it to 0.")
+            embedding_b = 0
+
+        @self.Param(self.cluster_model.set_num_wells)
+        def num_wells_adjustment(_, i):
+            return 1 if np.isclose(embedding_b, 0) else np.log10(embedding_b * i) + 1
+
         if formulation_type is None:
             # Return an empty efficiency block model
             pass
@@ -82,15 +92,15 @@ class EfficiencyBlockData(BlockData):
         """
 
         try:
-            params = self.plugging_campaign_model.model_inputs.config
+            wt_impact = (
+                self.plugging_campaign_model.model_inputs.config.objective_weight_impact
+            )
         except AttributeError:
             # This exception occurs only in tests
             LOGGER.warning("Unable to find config block in OptModelInputs")
-            params = SimpleNamespace(
-                **{"embedding_b": 0.0, "objective_weight_impact": 0}
-            )
+            wt_impact = 0
 
-        wt_efficiency = (100 - params.objective_weight_impact) / 100
+        wt_efficiency = (100 - wt_impact) / 100
 
         if formulation_type == "Zone":
             self.cluster_efficiency_score = Expression(
@@ -116,14 +126,6 @@ class EfficiencyBlockData(BlockData):
         @self.Constraint()
         def calculate_aggregated_efficiency_2(blk):
             return sum(blk.aggregated_efficiency[:]) == blk.cluster_efficiency
-
-        @self.Param(cm.set_num_wells)
-        def num_wells_adjustment(_, i):
-            return (
-                1
-                if np.isclose(params.embedding_b, 0)
-                else np.log10(params.embedding_b * i) + 1
-            )
 
         @self.Expression(doc="Total Efficiency Score")
         def cluster_efficiency_score(blk):

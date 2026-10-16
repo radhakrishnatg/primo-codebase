@@ -129,7 +129,7 @@ class GurobiSolver:
                     self.solver.set_var_attr(v, "BranchPriority", zone_vars_priority)
 
                 if hasattr(metric, "select_well_zone"):
-                    if metric.select_well_zone.domain is pyo.Binary:
+                    if next(metric.select_well_zone.values()).domain is pyo.Binary:
                         for v in metric.select_well_zone.values():
                             self.solver.set_var_attr(
                                 v, "BranchPriority", zone_vars_priority

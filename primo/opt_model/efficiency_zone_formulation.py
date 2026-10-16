@@ -311,6 +311,18 @@ class ZoneFormulationBlockData(BlockData):
                 wells_outside_zone
             ) * (blk.select_zone[z] - blk.select_well_zone[w, z])
 
+        @self.Constraint(cm.set_wells, self.set_zones)
+        def zone_based_num_wells_var_bound(blk, w, z):
+            wells_in_zone = zone_matrix[zone_matrix[w] <= z].index
+            if len(wells_in_zone) == len(cm.set_wells):
+                # All wells pairs are within zone <= z
+                return Constraint.Skip
+
+            return sum(
+                blk.num_wells_var_zone[n, z]
+                for n in range(len(wells_in_zone) + 1, max(cm.set_num_wells) + 1)
+            ) <= (blk.select_zone[z] - blk.select_well_zone[w, z])
+
         # @self.Constraint(cm.set_wells, self.set_zones)
         # def suppress_wells_rlt_2(blk, w, z):
         #     wells_outside_zone = zone_matrix[zone_matrix[w] > z].index
