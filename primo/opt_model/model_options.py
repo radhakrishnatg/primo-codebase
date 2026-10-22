@@ -155,7 +155,7 @@ def model_config() -> ConfigDict:
         "zone_well_pair_constraint_type",
         ConfigValue(
             default="strong",
-            domain=In(["strong", "weak"]),
+            domain=In(["strong", "weak", "clique"]),
             doc="Well-pair constraint type in zone formulation",
         ),
     )

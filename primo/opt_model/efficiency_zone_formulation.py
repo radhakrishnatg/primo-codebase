@@ -12,8 +12,10 @@
 
 # Standard libs
 import logging
+import time
 
 # Installed libs
+import networkx as nx
 import pandas as pd
 from pyomo.core.base.block import BlockData, declare_custom_block
 from pyomo.environ import (
@@ -199,6 +201,8 @@ class ZoneFormulationBlockData(BlockData):
         # Build remaining constraints based on metric type
         if model_type == "strong":
             getattr(self, "_build_" + metric.metric_type + "_model")(zone_wells)
+        elif model_type == "clique":
+            self._build_clique_well_pair_model(zone_wells)
         else:
             # Code reaches here only for weak well-pair case
             self._build_weaker_well_pair_model(zone_wells)
@@ -334,6 +338,117 @@ class ZoneFormulationBlockData(BlockData):
         #         cm.select_well[v] - blk.select_well_zone[v, z]
         #         for v in wells_outside_zone
         #     ) <= len(wells_outside_zone) * (cm.select_cluster - blk.select_zone[z])
+
+    @staticmethod
+    def get_cliques(zone_wells: list, cut_level: int = 1):
+        """Identifies maximal cliques for a given graph
+
+        Parameters
+        ----------
+        zone_wells : pd.Series
+            List of edges in the graph
+        """
+        graph = nx.Graph()
+        graph.add_edges_from(zone_wells)
+        cliques = []
+        set_well_pairs = set(zone_wells)
+
+        start_time = time.time()
+        has_time_out = False
+        for cq in nx.find_cliques(graph):
+            cliques.append(cq)
+
+            if time.time() - start_time > 30.0:
+                LOGGER.warning(
+                    "Entire set of cliques could not be generated within time limit"
+                )
+                has_time_out = True
+                break
+
+        if has_time_out or len(cliques) > 5 * len(zone_wells):
+            LOGGER.warning(
+                f"Time out: {has_time_out}. Number of cliques is significantly larger "
+                f"than the number of edges. \n\tUsing edges instead of cliques."
+            )
+            return list(zone_wells)
+
+        if cut_level == 1:
+            if len(cliques) <= 1.1 * len(zone_wells):
+                LOGGER.info("Using cliques for this zone")
+                return cliques
+
+            LOGGER.info("Using edge instead of cliques.")
+            return list(zone_wells)
+
+        # All cliques were enumerated within time limit, and the size is clique set is
+        # at most five times the size of zone_wells
+        if len(cliques) <= len(zone_wells):
+            # In this case, we can use all cliques to eliminate well pairs
+            LOGGER.info(
+                "Cardinality of cliques < cardinality of edges, so using all cliques."
+            )
+            return cliques
+
+        # Sort the cliques in descending order of their size
+        LOGGER.info("Number of cliques obtained is greater than number of edges.")
+        cliques = sorted(cliques, key=len, reverse=True)
+        cutoff_index = {len(cq): index for index, cq in enumerate(cliques)}
+
+        if len(cutoff_index) == 1 or len(cliques) <= 1.5 * len(zone_wells):
+            # Even though it increases model size, we still use all the cliques
+            LOGGER.info(f"Clique sizes: {cutoff_index}. Using all cliques.")
+            return cliques
+
+        # Remove cliques of smaller sizes and add missing edges
+        for clique_size in range(min(cutoff_index), max(cutoff_index)):
+            if clique_size not in cutoff_index:
+                # Intermediate clique size may not be present.
+                continue
+
+            LOGGER.warning(f"Eliminating cliques of size <= {clique_size}")
+            cliques = cliques[: cutoff_index[clique_size + 1] + 1]
+
+            LOGGER.info("Computing missing edges")
+            covered_edges = {
+                tuple(sorted(e))
+                for sg in cliques
+                for e in nx.complete_graph(sg).edges()
+            }
+            missing_edges = list(set_well_pairs - covered_edges)
+
+            if len(cliques) + len(missing_edges) <= len(zone_wells):
+                LOGGER.info(
+                    "Identified a few cliques that reduce the number of constraints"
+                )
+                break
+
+        LOGGER.info(
+            f"Number of well pairs: {len(zone_wells)}. "
+            f"Number of cliques: {len(cliques) + len(missing_edges)}"
+        )
+        return cliques + missing_edges
+
+    def _build_clique_well_pair_model(self, zone_wells: pd.Series):
+        clique_cuts = {}
+        for zone in self.set_zones:
+            well_pairs_outside_zone = zone_wells[zone_wells > zone].index
+            if len(well_pairs_outside_zone) > 0:
+                LOGGER.info(
+                    f"Constructing cliques for cluster {self.cluster_model.index()} "
+                    f"and zone {zone}"
+                )
+                clique_cuts[zone] = self.get_cliques(well_pairs_outside_zone)
+
+        clique_cut_set = [
+            (zone, k) for zone, cq in clique_cuts.items() for k in range(len(cq))
+        ]
+
+        @self.Constraint(clique_cut_set)
+        def eliminate_cliques(blk, z, k):
+            return (
+                sum(blk.select_well_zone[v, z] for v in clique_cuts[z][k])
+                <= blk.select_zone[z]
+            )
 
 
 def build_cluster_efficiency_model(eff_blk):
