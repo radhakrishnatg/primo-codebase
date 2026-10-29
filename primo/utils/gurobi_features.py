@@ -90,6 +90,20 @@ class GurobiSolver:
         # pylint: disable = protected-access
         return self.solver._solver_model
 
+    def get_solution_summary(self):
+        """Returns solve statistics"""
+        gm = self.gurobi_model
+        return {
+            "best_solution": gm.ObjVal,
+            "best_bound": gm.ObjBoundC,
+            "duality_gap": gm.MIPGap,
+            "run_time": gm.Runtime,
+            "work": gm.Work,
+            "status": gm.Status,
+            "num_nodes_explored": gm.NodeCount,
+            "num_nodes_remaining": gm.OpenNodeCount,
+        }
+
     def set_branch_priorities(
         self,
         cluster_vars_priority: int = 10000,
